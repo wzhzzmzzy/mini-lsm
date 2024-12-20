@@ -55,10 +55,6 @@ impl SimpleLeveledCompactionController {
                 continue;
             }
             let lower_level_sst_ids = &snapshot.levels[level].1;
-            println!(
-                "percent {}",
-                (lower_level_sst_ids.len() / upper_level_sst_ids.len()) * 100
-            );
             if lower_level_sst_ids.is_empty()
                 || ((lower_level_sst_ids.len() / upper_level_sst_ids.len()) * 100
                     < self.options.size_ratio_percent)

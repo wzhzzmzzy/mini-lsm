@@ -16,7 +16,7 @@ pub struct SsTableBuilder {
     data: Vec<u8>,
     pub(crate) meta: Vec<BlockMeta>,
     block_size: usize,
-    hashes: Vec<u32>
+    hashes: Vec<u32>,
 }
 
 impl SsTableBuilder {

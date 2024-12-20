@@ -1,6 +1,7 @@
 #![allow(dead_code)] // REMOVE THIS LINE after fully implementing this functionality
 
 use std::collections::HashMap;
+use std::fs::File;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicUsize;
@@ -307,6 +308,10 @@ impl LsmStorageInner {
             }
         }
 
+        if key == b"0000005000" {
+            println!("key is empty");
+        }
+
         let read_guard = self.state.read();
         let l0_sst_iters: Vec<_> = read_guard
             .l0_sstables
@@ -328,10 +333,16 @@ impl LsmStorageInner {
             })
             .collect();
 
-        let l1_sst: Vec<Arc<SsTable>> = read_guard.levels[0]
-            .1
+        let sst_concat_iters: Vec<_> = read_guard
+            .levels
             .iter()
-            .map(|sst_id| read_guard.sstables.get(sst_id).unwrap().clone())
+            .map(|level| {
+                level
+                    .1
+                    .iter()
+                    .map(|sst_id| read_guard.sstables.get(sst_id).unwrap().clone())
+                    .collect::<Vec<_>>()
+            })
             .collect();
 
         drop(read_guard);
@@ -341,9 +352,16 @@ impl LsmStorageInner {
             .map(|sst| SsTableIterator::create_and_seek_to_key(sst, KeySlice::from_slice(key)))
             .collect();
 
+        let sst_concat_iters: Result<Vec<_>> = sst_concat_iters
+            .into_iter()
+            .map(|sstables| {
+                SstConcatIterator::create_and_seek_to_key(sstables, KeySlice::from_slice(key))
+            })
+            .collect();
+
         let sst_iters = TwoMergeIterator::create(
             MergeIterator::create(l0_sst_iters?.into_iter().map(Box::new).collect()),
-            SstConcatIterator::create_and_seek_to_key(l1_sst, KeySlice::from_slice(key))?,
+            MergeIterator::create(sst_concat_iters?.into_iter().map(Box::new).collect()),
         )?;
 
         if key == sst_iters.key().raw_ref() && !sst_iters.value().is_empty() {
@@ -398,7 +416,8 @@ impl LsmStorageInner {
     }
 
     pub(super) fn sync_dir(&self) -> Result<()> {
-        unimplemented!()
+        File::open(&self.path)?.sync_all()?;
+        Ok(())
     }
 
     /// Force freeze the current memtable to an immutable memtable
@@ -495,10 +514,16 @@ impl LsmStorageInner {
             })
             .collect();
 
-        let l1_sst: Vec<Arc<SsTable>> = read_guard.levels[0]
-            .1
+        let sst_concat_iters: Vec<_> = read_guard
+            .levels
             .iter()
-            .map(|sst_id| read_guard.sstables.get(sst_id).unwrap().clone())
+            .map(|level| {
+                level
+                    .1
+                    .iter()
+                    .map(|sst_id| read_guard.sstables.get(sst_id).unwrap().clone())
+                    .collect::<Vec<_>>()
+            })
             .collect();
 
         drop(read_guard);
@@ -521,12 +546,33 @@ impl LsmStorageInner {
             })
             .collect();
 
+        let sst_concat_iters: Result<Vec<_>> = sst_concat_iters
+            .into_iter()
+            .map(|sstables| match lower {
+                Bound::Included(key) => {
+                    SstConcatIterator::create_and_seek_to_key(sstables, KeySlice::from_slice(key))
+                }
+                Bound::Excluded(key) => {
+                    let mut iter = SstConcatIterator::create_and_seek_to_key(
+                        sstables,
+                        KeySlice::from_slice(key),
+                    )?;
+
+                    if iter.is_valid() && iter.key().raw_ref() == key {
+                        iter.next()?;
+                    }
+                    Ok(iter)
+                }
+                Bound::Unbounded => SstConcatIterator::create_and_seek_to_first(sstables),
+            })
+            .collect();
+
         Ok(FusedIterator::new(LsmIterator::new(
             TwoMergeIterator::create(
                 MergeIterator::create(iters.into_iter().map(Box::new).collect()),
                 TwoMergeIterator::create(
                     MergeIterator::create(l0_sst_iters?.into_iter().map(Box::new).collect()),
-                    SstConcatIterator::create_and_seek_to_first(l1_sst)?,
+                    MergeIterator::create(sst_concat_iters?.into_iter().map(Box::new).collect()),
                 )?,
             )?,
             match upper {
