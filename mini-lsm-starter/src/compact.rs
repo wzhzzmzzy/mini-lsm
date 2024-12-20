@@ -193,15 +193,10 @@ impl LsmStorageInner {
 
     fn select_sst_by_level(&self, level: usize) -> Vec<usize> {
         if level == 0 {
-            return self.state.read().l0_sstables.clone();
+            self.state.read().l0_sstables.clone()
+        } else {
+            self.state.read().levels[level - 1].1.clone()
         }
-        self.state
-            .read()
-            .levels
-            .iter()
-            .filter(|level_pair| level_pair.0 == level - 1)
-            .flat_map(|level| level.1.clone())
-            .collect()
     }
 
     pub fn force_full_compaction(&self) -> Result<()> {
@@ -220,7 +215,7 @@ impl LsmStorageInner {
 
         // 更新 levels，由于 L0 有单独的字段存储，所以 levels 中 0 代表 L1
         write_ref.levels[0] = (
-            0,
+            1,
             sst_next_level
                 .iter()
                 .map(|sst| sst.sst_id())

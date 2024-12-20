@@ -33,9 +33,46 @@ impl SimpleLeveledCompactionController {
     /// Returns `None` if no compaction needs to be scheduled. The order of SSTs in the compaction task id vector matters.
     pub fn generate_compaction_task(
         &self,
-        _snapshot: &LsmStorageState,
+        snapshot: &LsmStorageState,
     ) -> Option<SimpleLeveledCompactionTask> {
-        unimplemented!()
+        let l0_sst = &snapshot.l0_sstables;
+        let l1_sst = &snapshot.levels[0].1;
+
+        if l0_sst.len() >= self.options.level0_file_num_compaction_trigger
+            && (l1_sst.len() / l0_sst.len()) * 100 < self.options.size_ratio_percent
+        {
+            return Some(SimpleLeveledCompactionTask {
+                upper_level: None,
+                upper_level_sst_ids: l0_sst.clone(),
+                lower_level: 1,
+                lower_level_sst_ids: l1_sst.clone(),
+                is_lower_level_bottom_level: self.options.max_levels == 1,
+            });
+        }
+        for level in 1..self.options.max_levels {
+            let upper_level_sst_ids = &snapshot.levels[level - 1].1;
+            if upper_level_sst_ids.is_empty() {
+                continue;
+            }
+            let lower_level_sst_ids = &snapshot.levels[level].1;
+            println!(
+                "percent {}",
+                (lower_level_sst_ids.len() / upper_level_sst_ids.len()) * 100
+            );
+            if lower_level_sst_ids.is_empty()
+                || ((lower_level_sst_ids.len() / upper_level_sst_ids.len()) * 100
+                    < self.options.size_ratio_percent)
+            {
+                return Some(SimpleLeveledCompactionTask {
+                    upper_level: Some(level),
+                    upper_level_sst_ids: upper_level_sst_ids.clone(),
+                    lower_level: level + 1,
+                    lower_level_sst_ids: lower_level_sst_ids.clone(),
+                    is_lower_level_bottom_level: self.options.max_levels == level,
+                });
+            }
+        }
+        None
     }
 
     /// Apply the compaction result.
@@ -47,10 +84,37 @@ impl SimpleLeveledCompactionController {
     /// in your implementation.
     pub fn apply_compaction_result(
         &self,
-        _snapshot: &LsmStorageState,
-        _task: &SimpleLeveledCompactionTask,
-        _output: &[usize],
+        snapshot: &LsmStorageState,
+        task: &SimpleLeveledCompactionTask,
+        output: &[usize],
     ) -> (LsmStorageState, Vec<usize>) {
-        unimplemented!()
+        let mut levels = snapshot.levels.clone();
+        levels[task.lower_level - 1] = (task.lower_level, Vec::from(output));
+        if let Some(upper_level) = task.upper_level {
+            levels[upper_level - 1] = (upper_level, vec![]);
+        } else {
+            println!("level1: {:?}", levels[task.lower_level - 1]);
+        }
+        let new_state = LsmStorageState {
+            memtable: snapshot.memtable.clone(),
+            imm_memtables: snapshot.imm_memtables.clone(),
+            levels,
+            sstables: snapshot.sstables.clone(),
+            l0_sstables: if task.upper_level.is_none() {
+                snapshot
+                    .l0_sstables
+                    .iter()
+                    .filter(|id| !task.upper_level_sst_ids.contains(*id))
+                    .cloned()
+                    .collect()
+            } else {
+                vec![]
+            },
+        };
+
+        let mut need_delete = snapshot.levels[task.lower_level - 1].1.clone();
+        need_delete.extend(task.upper_level_sst_ids.iter());
+
+        (new_state, need_delete)
     }
 }

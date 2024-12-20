@@ -328,12 +328,10 @@ impl LsmStorageInner {
             })
             .collect();
 
-        let l1_sst: Vec<Arc<SsTable>> = read_guard
-            .levels
+        let l1_sst: Vec<Arc<SsTable>> = read_guard.levels[0]
+            .1
             .iter()
-            .filter(|level_pair| level_pair.0 == 0)
-            .flat_map(|level_pair| level_pair.1.clone())
-            .map(|sst_id| read_guard.sstables.get(&sst_id).unwrap().clone())
+            .map(|sst_id| read_guard.sstables.get(sst_id).unwrap().clone())
             .collect();
 
         drop(read_guard);
@@ -497,12 +495,10 @@ impl LsmStorageInner {
             })
             .collect();
 
-        let l1_sst: Vec<Arc<SsTable>> = read_guard
-            .levels
+        let l1_sst: Vec<Arc<SsTable>> = read_guard.levels[0]
+            .1
             .iter()
-            .filter(|level_pair| level_pair.0 == 0)
-            .flat_map(|level_pair| level_pair.1.clone())
-            .map(|sst_id| read_guard.sstables.get(&sst_id).unwrap().clone())
+            .map(|sst_id| read_guard.sstables.get(sst_id).unwrap().clone())
             .collect();
 
         drop(read_guard);
