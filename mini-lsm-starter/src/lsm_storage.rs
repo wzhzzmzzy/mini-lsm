@@ -308,10 +308,6 @@ impl LsmStorageInner {
             }
         }
 
-        if key == b"0000005000" {
-            println!("key is empty");
-        }
-
         let read_guard = self.state.read();
         let l0_sst_iters: Vec<_> = read_guard
             .l0_sstables

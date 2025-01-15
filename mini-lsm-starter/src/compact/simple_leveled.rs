@@ -28,6 +28,10 @@ impl SimpleLeveledCompactionController {
         Self { options }
     }
 
+    fn over_size_ratio(&self, lower_len: usize, upper_len: usize) -> bool {
+        (lower_len as f64 / upper_len as f64) < self.options.size_ratio_percent as f64 / 100.0
+    }
+
     /// Generates a compaction task.
     ///
     /// Returns `None` if no compaction needs to be scheduled. The order of SSTs in the compaction task id vector matters.
@@ -39,7 +43,7 @@ impl SimpleLeveledCompactionController {
         let l1_sst = &snapshot.levels[0].1;
 
         if l0_sst.len() >= self.options.level0_file_num_compaction_trigger
-            && (l1_sst.len() / l0_sst.len()) * 100 < self.options.size_ratio_percent
+            && self.over_size_ratio(l1_sst.len(), l0_sst.len())
         {
             return Some(SimpleLeveledCompactionTask {
                 upper_level: None,
@@ -56,15 +60,14 @@ impl SimpleLeveledCompactionController {
             }
             let lower_level_sst_ids = &snapshot.levels[level].1;
             if lower_level_sst_ids.is_empty()
-                || ((lower_level_sst_ids.len() / upper_level_sst_ids.len()) * 100
-                    < self.options.size_ratio_percent)
+                || self.over_size_ratio(lower_level_sst_ids.len(), upper_level_sst_ids.len())
             {
                 return Some(SimpleLeveledCompactionTask {
                     upper_level: Some(level),
                     upper_level_sst_ids: upper_level_sst_ids.clone(),
                     lower_level: level + 1,
                     lower_level_sst_ids: lower_level_sst_ids.clone(),
-                    is_lower_level_bottom_level: self.options.max_levels == level,
+                    is_lower_level_bottom_level: self.options.max_levels == level + 1,
                 });
             }
         }
@@ -87,9 +90,9 @@ impl SimpleLeveledCompactionController {
         let mut levels = snapshot.levels.clone();
         levels[task.lower_level - 1] = (task.lower_level, Vec::from(output));
         if let Some(upper_level) = task.upper_level {
-            levels[upper_level - 1] = (upper_level, vec![]);
-        } else {
-            println!("level1: {:?}", levels[task.lower_level - 1]);
+            let mut t = levels[upper_level - 1].1.clone();
+            t.retain_mut(|i| !task.upper_level_sst_ids.contains(i));
+            levels[upper_level - 1] = (upper_level, t);
         }
         let new_state = LsmStorageState {
             memtable: snapshot.memtable.clone(),
@@ -104,7 +107,7 @@ impl SimpleLeveledCompactionController {
                     .cloned()
                     .collect()
             } else {
-                vec![]
+                snapshot.l0_sstables.clone()
             },
         };
 

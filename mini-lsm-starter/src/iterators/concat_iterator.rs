@@ -18,7 +18,18 @@ pub struct SstConcatIterator {
 
 /// 这里假定传入的 sstables 是有序的
 impl SstConcatIterator {
+    fn check_sst_valid(sstables: &[Arc<SsTable>]) {
+        for sst in sstables {
+            assert!(sst.first_key() <= sst.last_key());
+        }
+        if !sstables.is_empty() {
+            for i in 0..(sstables.len() - 1) {
+                assert!(sstables[i].last_key() < sstables[i + 1].first_key());
+            }
+        }
+    }
     pub fn create_and_seek_to_first(sstables: Vec<Arc<SsTable>>) -> Result<Self> {
+        Self::check_sst_valid(&sstables);
         let mut iter = Self {
             current: None,
             next_sst_idx: 0,
@@ -33,6 +44,7 @@ impl SstConcatIterator {
     }
 
     pub fn create_and_seek_to_key(sstables: Vec<Arc<SsTable>>, key: KeySlice) -> Result<Self> {
+        Self::check_sst_valid(&sstables);
         let mut iter = Self {
             current: None,
             next_sst_idx: 0,
@@ -80,7 +92,7 @@ impl StorageIterator for SstConcatIterator {
 
     fn is_valid(&self) -> bool {
         if let Some(ref iter) = self.current {
-            iter.is_valid()
+            iter.is_valid() || self.next_sst_idx < self.sstables.len()
         } else {
             self.next_sst_idx < self.sstables.len()
         }
@@ -93,12 +105,19 @@ impl StorageIterator for SstConcatIterator {
         };
 
         if use_next_sst {
-            self.current = Some(SsTableIterator::create_and_seek_to_first(
-                self.sstables[self.next_sst_idx].clone(),
-            )?);
-            self.next_sst_idx += 1;
+            if self.next_sst_idx >= self.sstables.len() {
+                self.current = None;
+            } else {
+                self.current = Some(SsTableIterator::create_and_seek_to_first(
+                    self.sstables[self.next_sst_idx].clone(),
+                )?);
+                self.next_sst_idx += 1;
+            }
         } else if let Some(ref mut iter) = self.current {
             iter.next()?;
+            if !iter.is_valid() && self.next_sst_idx < self.sstables.len() {
+                self.next()?;
+            }
         }
 
         Ok(())
